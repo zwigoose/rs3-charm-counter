@@ -1,6 +1,6 @@
 {
 	"appName": "Charm Counter",
-	"description": "Counts Summoning charms your charming imp puts in your backpack by reading the chatbox.",
+	"description": "Tracks your Summoning charm stacks by reading the RS3 backpack.",
 	"appUrl": "./index.html",
 	"configUrl": "./appconfig.json",
 	"iconUrl": "./icon.png",

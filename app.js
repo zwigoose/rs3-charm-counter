@@ -2,148 +2,132 @@
   "use strict";
 
   var COLOURS = ["blue", "crimson", "green", "gold"];
-  // Rough XP per charm at levels 66-73 with the pouches from the 64→75 plan
+  // Rough XP per charm with the 64→75 plan's pouches at levels 66-73
   // (Mithril minotaur, Stranger plant, Bunyip, Barker toad).
   var XP_PER_CHARM = { blue: 580.8, crimson: 281.6, green: 119.2, gold: 87 };
-  var STORE_KEY = "charmCounter.v1";
-  var READ_MS = 600;     // chat read interval while the chatbox is known
-  var FIND_MS = 3000;    // retry interval while looking for the chatbox
+  // A charm that reappears with more than this many is treated as the backpack
+  // being reopened, not as a drop (one kill with a charming potion is at most a few).
+  var MAX_SINGLE_DROP = 6;
+  var STORE_KEY = "charmCounter.v2";
+  var READ_MS = 1000;
 
   var $ = function (id) { return document.getElementById(id); };
-  var parser = CharmParser.createParser();
+  var T = CharmInventory.decodeTemplates(CHARM_TEMPLATES);
   var state = load();
-  var reader = null;
-  var paused = false;
-  var loopTimer = null;
+  var paused = false, timer = null, lastRawKey = "", hiddenSince = 0;
 
   // ---- Storage ---------------------------------------------------------
-  function blank() {
-    var z = function () { return { blue: 0, crimson: 0, green: 0, gold: 0 }; };
-    return { total: z(), trip: z(), tripStart: Date.now() };
-  }
+  function zeros() { return { blue: 0, crimson: 0, green: 0, gold: 0 }; }
+  function blank() { return { now: null, trip: zeros(), tripStart: Date.now() }; }
   function load() {
     try {
       var s = JSON.parse(localStorage.getItem(STORE_KEY) || "null");
-      if (s && s.total && s.trip) return s;
+      if (s && s.trip) return s;
     } catch (e) {}
     return blank();
   }
-  function save() {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) {}
-  }
+  function save() { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) {} }
 
   // ---- UI --------------------------------------------------------------
   function render() {
     COLOURS.forEach(function (c) {
       var tile = document.querySelector('.tile[data-colour="' + c + '"]');
-      tile.querySelector('[data-field="total"]').textContent = state.total[c].toLocaleString();
-      tile.querySelector('[data-field="trip"]').textContent = state.trip[c].toLocaleString();
+      tile.querySelector('[data-field="now"]').textContent = state.now ? state.now[c].toLocaleString() : "–";
+      tile.querySelector('[data-field="trip"]').textContent = "+" + state.trip[c].toLocaleString();
     });
     var mins = Math.max(0, (Date.now() - state.tripStart) / 60000);
     var h = Math.floor(mins / 60), m = Math.floor(mins % 60);
     $("tripTime").textContent = h + ":" + (m < 10 ? "0" : "") + m;
-    var tripCount = COLOURS.reduce(function (s, c) { return s + state.trip[c]; }, 0);
-    $("rate").textContent = mins >= 2 && tripCount > 0 ? Math.round(tripCount / (mins / 60)).toLocaleString() : "–";
-    var xp = COLOURS.reduce(function (s, c) { return s + state.total[c] * XP_PER_CHARM[c]; }, 0);
+    var gained = COLOURS.reduce(function (s, c) { return s + state.trip[c]; }, 0);
+    $("rate").textContent = mins >= 2 && gained > 0 ? Math.round(gained / (mins / 60)).toLocaleString() : "–";
+    var xp = state.now ? COLOURS.reduce(function (s, c) { return s + state.now[c] * XP_PER_CHARM[c]; }, 0) : 0;
     $("xpBanked").textContent = Math.round(xp).toLocaleString();
   }
   function flash(c) {
     var tile = document.querySelector('.tile[data-colour="' + c + '"]');
     tile.classList.remove("flash"); void tile.offsetWidth; tile.classList.add("flash");
   }
-  function setStatus(text, kind) {
-    var el = $("status"); el.textContent = text; el.className = "status" + (kind ? " " + kind : "");
-  }
-  function logLine(text, hit) {
-    if (!text) return;
-    var ol = $("lines");
-    var li = document.createElement("li");
-    li.textContent = text; if (hit) li.className = "hit";
+  function setStatus(text, kind) { var el = $("status"); el.textContent = text; el.className = "status" + (kind ? " " + kind : ""); }
+  function log(text, hit) {
+    var ol = $("lines"), li = document.createElement("li");
+    li.textContent = new Date().toLocaleTimeString() + "  " + text;
+    if (hit) li.className = "hit";
     ol.insertBefore(li, ol.firstChild);
     while (ol.children.length > 30) ol.removeChild(ol.lastChild);
   }
-
-  function addCounts(counts) {
-    var any = false;
-    COLOURS.forEach(function (c) {
-      var n = counts[c] || 0;
-      if (n) { state.total[c] += n; state.trip[c] += n; flash(c); any = true; }
-    });
-    if (any) { save(); render(); }
-    return any;
+  function describe(counts) {
+    return COLOURS.map(function (c) {
+      var v = counts[c];
+      return c + " " + (v === undefined ? "not seen" : v === null ? "unreadable" : v);
+    }).join(", ");
   }
 
-  function handleLines(lines) {
-    for (var i = 0; i < lines.length; i++) {
-      var text = lines[i] && lines[i].text;
-      if (!text) continue;
-      var r = parser.parseLine(text);
-      var hit = r.matched && addCounts(r.counts);
-      logLine(text, hit);
+  // ---- Tracking --------------------------------------------------------
+  // counts: colour -> number | undefined (not on screen); null readings are filtered out before this.
+  function applyReading(counts) {
+    var visible = COLOURS.some(function (c) { return counts[c] !== undefined; });
+    if (!visible) {
+      // Backpack closed, covered, or no charms in it. Remember nothing so a
+      // reopened backpack is taken as the new baseline.
+      if (!hiddenSince) hiddenSince = Date.now();
+      setStatus("No charms visible. Open your backpack.", "warn");
+      if (state.now) { state.now = null; save(); render(); }
+      return;
     }
+    hiddenSince = 0;
+    setStatus("Reading backpack", "ok");
+    var next = {};
+    COLOURS.forEach(function (c) { next[c] = counts[c] === undefined ? 0 : counts[c]; });
+    var prev = state.now;
+    var gainedAny = false;
+    if (prev) {
+      COLOURS.forEach(function (c) {
+        var diff = next[c] - prev[c];
+        if (diff <= 0) return; // used, banked or unchanged
+        if (prev[c] === 0 && diff > MAX_SINGLE_DROP) return; // reappeared, not a drop
+        state.trip[c] += diff; gainedAny = true; flash(c);
+        log("+" + diff + " " + c + " (" + prev[c] + " → " + next[c] + ")", true);
+      });
+    }
+    var changed = !prev || COLOURS.some(function (c) { return prev[c] !== next[c]; });
+    state.now = next;
+    if (changed || gainedAny) { save(); render(); }
   }
 
-  // ---- Chat reading ----------------------------------------------------
-  function canRead() {
-    return window.alt1 && alt1.permissionPixel;
+  function readOnce() {
+    var img = A1lib.captureHoldFullRs();
+    if (!img) { setStatus("Couldn't capture the game window", "bad"); return; }
+    var r = CharmInventory.readCharms(img, T);
+    var unreadable = COLOURS.filter(function (c) { return r.counts[c] === null; });
+    if (unreadable.length) {
+      // A hover tooltip or the mouse over a number can hide digits for a moment.
+      setStatus("Can't read the " + unreadable.join(", ") + " stack right now", "warn");
+      return;
+    }
+    // Only act on a reading seen twice in a row, so a half-drawn frame can't add charms.
+    var key = JSON.stringify(r.counts);
+    if (key !== lastRawKey) { lastRawKey = key; return; }
+    applyReading(r.counts);
   }
 
   function tick() {
-    loopTimer = null;
+    timer = null;
     if (paused) return;
-    if (!canRead()) { schedule(FIND_MS); return; }
-    if (!alt1.rsLinked) { setStatus("Waiting for the RuneScape window…", "warn"); schedule(FIND_MS); return; }
-
-    try {
-      if (!reader.pos) {
-        var found = reader.find();
-        if (!found) {
-          setStatus("Looking for your chatbox… make sure it's open and visible.", "warn");
-          schedule(FIND_MS);
-          return;
-        }
-        var box = reader.pos.mainbox.rect;
-        try { alt1.overLayRect(A1lib.mixColor(79, 179, 186), box.x, box.y, box.width, box.height, 1500, 2); } catch (e) {}
-        setStatus("Reading chat" + (reader.pos.mainbox.timestamp ? "" : " (turn on chat timestamps for best results)"), "ok");
-      }
-      var lines = reader.read();
-      if (lines === null) {
-        // Lost the chatbox (moved or closed). Look for it again.
-        reader.pos = null;
-        setStatus("Lost the chatbox, looking again…", "warn");
-        schedule(FIND_MS);
-        return;
-      }
-      handleLines(lines);
-    } catch (e) {
-      setStatus("Read error: " + (e && e.message ? e.message : e), "bad");
-      reader.pos = null;
-      schedule(FIND_MS);
-      return;
-    }
+    if (!window.alt1 || !alt1.permissionPixel) { schedule(3000); return; }
+    if (!alt1.rsLinked) { setStatus("Waiting for the RuneScape window…", "warn"); schedule(3000); return; }
+    try { readOnce(); }
+    catch (e) { setStatus("Read error: " + (e && e.message ? e.message : e), "bad"); }
     schedule(READ_MS);
   }
-  function schedule(ms) {
-    if (loopTimer) clearTimeout(loopTimer);
-    loopTimer = setTimeout(tick, ms);
-  }
+  function schedule(ms) { if (timer) clearTimeout(timer); timer = setTimeout(tick, ms); }
 
-  // Ctrl+V a screenshot of the chatbox to test reading outside the game.
-  function readPastedImage(ref) {
+  // Paste a screenshot to check the reader outside the game.
+  function readPasted(img) {
     try {
-      var testReader = new Chatbox.default();
-      if (!testReader.find(ref)) { logLine("Pasted image: no chatbox found in it.", false); return; }
-      testReader.diffRead = false;
-      var lines = testReader.read(ref) || [];
-      var testParser = CharmParser.createParser();
-      lines.forEach(function (l) {
-        var r = testParser.parseLine(l.text);
-        logLine("[test] " + l.text, r.matched);
-      });
+      var r = CharmInventory.readCharms(img, T);
+      log("Pasted screenshot: " + (r.found ? describe(r.counts) : "no charms found"), r.found);
       $("debug").open = true;
-    } catch (e) {
-      logLine("Pasted image could not be read: " + (e && e.message ? e.message : e), false);
-    }
+    } catch (e) { log("Pasted screenshot could not be read: " + (e && e.message ? e.message : e)); }
   }
 
   // ---- Wiring ----------------------------------------------------------
@@ -151,53 +135,43 @@
     render();
     setInterval(render, 30000);
 
-    document.getElementById("tiles").addEventListener("click", function (e) {
-      var btn = e.target.closest("button[data-adj]");
-      if (!btn) return;
-      var c = btn.closest(".tile").dataset.colour;
-      var d = Number(btn.dataset.adj);
-      state.total[c] = Math.max(0, state.total[c] + d);
-      state.trip[c] = Math.max(0, state.trip[c] + d);
-      save(); render();
-    });
     $("newTripBtn").addEventListener("click", function () {
-      state.trip = { blue: 0, crimson: 0, green: 0, gold: 0 };
-      state.tripStart = Date.now();
-      save(); render();
+      state.trip = zeros(); state.tripStart = Date.now(); save(); render();
     });
     $("resetBtn").addEventListener("click", function () { $("confirmReset").hidden = false; });
     $("confirmNo").addEventListener("click", function () { $("confirmReset").hidden = true; });
     $("confirmYes").addEventListener("click", function () {
-      state = blank(); save(); render(); $("confirmReset").hidden = true;
+      state = blank(); lastRawKey = ""; save(); render(); $("confirmReset").hidden = true;
     });
     $("copyBtn").addEventListener("click", function () {
-      var text = "Blue " + state.total.blue + ", Crimson " + state.total.crimson +
-        ", Green " + state.total.green + ", Gold " + state.total.gold;
-      var done = function () { $("copyBtn").textContent = "Copied"; setTimeout(function () { $("copyBtn").textContent = "Copy totals"; }, 1500); };
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(done, function () { fallbackCopy(text); done(); });
-      } else { fallbackCopy(text); done(); }
+      var n = state.now || zeros();
+      var text = "Blue " + n.blue + ", Crimson " + n.crimson + ", Green " + n.green + ", Gold " + n.gold;
+      var btn = this;
+      var done = function () { btn.textContent = "Copied"; setTimeout(function () { btn.textContent = "Copy counts"; }, 1500); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, function () { fallbackCopy(text); done(); });
+      else { fallbackCopy(text); done(); }
     });
     $("pauseBtn").addEventListener("click", function () {
       paused = !paused;
       this.setAttribute("aria-pressed", String(paused));
       this.textContent = paused ? "Resume" : "Pause";
-      if (paused) setStatus("Paused", "warn"); else { setStatus("Resuming…"); schedule(0); }
+      if (paused) setStatus("Paused", "warn"); else { setStatus("Resuming…"); lastRawKey = ""; schedule(0); }
     });
 
-    try { A1lib.PasteInput.listen(readPastedImage, function (err) { logLine("Paste failed: " + err, false); }); } catch (e) {}
+    try { A1lib.PasteInput.listen(readPasted, function (err) { log("Paste failed: " + err); }); } catch (e) {}
 
     var configUrl = new URL("./appconfig.json", document.location.href).href;
     if (window.alt1) {
       A1lib.identifyApp(configUrl);
       if (!alt1.permissionPixel) {
-        showBanner("Alt1 needs the <b>view screen</b> permission for this app. Open the app's settings in Alt1 (the wrench icon) and allow it.");
+        showBanner("Alt1 needs the <b>view screen</b> permission for this app. Open the app's settings in Alt1 and allow it.");
         setStatus("No screen permission", "bad");
+      } else {
+        setStatus("Looking for your backpack…");
       }
-      reader = new Chatbox.default();
       schedule(0);
     } else {
-      showBanner('Open this page in Alt1 to count charms automatically. <a href="alt1://addapp/' + configUrl + '">Add it to Alt1</a>.');
+      showBanner('Open this page in Alt1 to read your backpack automatically. <a href="alt1://addapp/' + configUrl + '">Add it to Alt1</a>.');
       setStatus("Not running in Alt1", "warn");
     }
   }
@@ -209,8 +183,8 @@
     document.body.removeChild(ta);
   }
 
-  if (typeof A1lib === "undefined" || typeof Chatbox === "undefined") {
-    setStatus("Couldn't load the Alt1 libraries. Check your connection and reload.", "bad");
+  if (typeof A1lib === "undefined") {
+    setStatus("Couldn't load the Alt1 library. Check your connection and reload.", "bad");
     return;
   }
   setup();
