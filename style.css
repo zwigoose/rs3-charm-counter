@@ -1,0 +1,71 @@
+/* Sized for a small Alt1 app window (about 260×360). Dark to sit next to the game. */
+:root {
+  --bg: #12191b;
+  --panel: #1b2528;
+  --line: #2d3b3f;
+  --fg: #e4ecee;
+  --muted: #8fa2a7;
+  --accent: #4fb3ba;
+  --gold: #e0b742;
+  --green: #5cc06c;
+  --crimson: #f06a7c;
+  --blue: #6d9cf0;
+  --danger: #e2584f;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); }
+body {
+  font: 13px/1.4 "Segoe UI", system-ui, -apple-system, sans-serif;
+  padding: 10px;
+  display: grid;
+  gap: 10px;
+}
+h1 { font-size: 14px; margin: 0; font-weight: 600; letter-spacing: 0.02em; }
+.top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.status { font-size: 11px; color: var(--muted); }
+.status.ok { color: var(--green); }
+.status.warn { color: var(--gold); }
+.status.bad { color: var(--danger); }
+.banner { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font-size: 12px; }
+.banner a { color: var(--accent); }
+main { display: grid; gap: 10px; }
+
+.tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.tile {
+  background: var(--panel); border: 1px solid var(--line); border-top: 3px solid var(--c);
+  border-radius: 6px; padding: 6px 8px; display: grid; gap: 1px; position: relative;
+}
+.tile.gold { --c: var(--gold); } .tile.green { --c: var(--green); }
+.tile.crimson { --c: var(--crimson); } .tile.blue { --c: var(--blue); }
+.tile .name { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--c); font-weight: 600; }
+.tile .total { font-size: 22px; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.tile .trip { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tile .adj { position: absolute; top: 5px; right: 5px; display: flex; gap: 2px; opacity: 0.35; }
+.tile:hover .adj, .tile:focus-within .adj { opacity: 1; }
+.tile .adj button { width: 20px; height: 20px; padding: 0; font-size: 13px; line-height: 1; }
+.tile.flash { animation: flash 700ms ease-out; }
+@keyframes flash { from { background: color-mix(in srgb, var(--c) 35%, var(--panel)); } to { background: var(--panel); } }
+@media (prefers-reduced-motion: reduce) { .tile.flash { animation: none; } }
+
+.stats { display: flex; flex-wrap: wrap; gap: 4px 12px; font-variant-numeric: tabular-nums; }
+.label { color: var(--muted); font-size: 11px; }
+
+.actions, .confirm { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+button {
+  font: inherit; font-size: 12px; color: var(--fg); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 5px; padding: 4px 9px; cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button.ghost { background: transparent; }
+button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+button[aria-pressed="true"] { background: var(--gold); border-color: var(--gold); color: #1a1405; }
+
+details { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.hint { font-size: 11px; color: var(--muted); margin: 6px 0; }
+.lines { margin: 0; padding-left: 0; list-style: none; display: grid; gap: 2px; max-height: 140px; overflow-y: auto; font-size: 11px; }
+.lines li { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lines li.hit { color: var(--fg); }
+.lines li.hit::before { content: "✓ "; color: var(--green); }

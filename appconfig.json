@@ -1,0 +1,16 @@
+{
+	"appName": "Charm Counter",
+	"description": "Counts Summoning charms your charming imp puts in your backpack by reading the chatbox.",
+	"appUrl": "./index.html",
+	"configUrl": "./appconfig.json",
+	"iconUrl": "./icon.png",
+	"defaultWidth": 270,
+	"defaultHeight": 380,
+	"minWidth": 220,
+	"minHeight": 260,
+	"maxWidth": 600,
+	"maxHeight": 900,
+	"requestHandlers": [],
+	"activators": [],
+	"permissions": "pixel,overlay"
+}
