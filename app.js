@@ -42,6 +42,110 @@
     $("rate").textContent = mins >= 2 && gained > 0 ? Math.round(gained / (mins / 60)).toLocaleString() : "–";
     var xp = state.now ? COLOURS.reduce(function (s, c) { return s + state.now[c] * XP_PER_CHARM[c]; }, 0) : 0;
     $("xpBanked").textContent = Math.round(xp).toLocaleString();
+    var perKill = currentRates();
+    perKill = COLOURS.reduce(function (s, c) { return s + perKill[c]; }, 0) * (goal.potions ? 2 : 1);
+    var tripKills = perKill > 0 ? gained / perKill : 0;
+    $("tripKills").textContent = Math.round(tripKills).toLocaleString();
+    renderGoal(mins, tripKills);
+  }
+
+  // ---- Goal ------------------------------------------------------------
+  var GOAL_KEY = "charmCounter.goal";
+  var goal = loadGoal();
+  function loadGoal() {
+    var d = { xp: 0, goalLevel: 75, monster: "exiled", boost: 0, potions: false,
+              custom: { blue: 25, crimson: 20, green: 10, gold: 10 } };
+    try {
+      var s = JSON.parse(localStorage.getItem(GOAL_KEY) || "null");
+      if (s) for (var k in d) if (s[k] !== undefined) d[k] = s[k];
+    } catch (e) {}
+    return d;
+  }
+  function saveGoal() { try { localStorage.setItem(GOAL_KEY, JSON.stringify(goal)); } catch (e) {} }
+  function currentRates() {
+    if (goal.monster === "custom") {
+      var r = {}; COLOURS.forEach(function (c) { r[c] = Math.max(0, Number(goal.custom[c]) || 0) / 100; }); return r;
+    }
+    return (CharmGoal.MONSTERS[goal.monster] || CharmGoal.MONSTERS.exiled).rates;
+  }
+  function fmtHours(h) {
+    if (!isFinite(h)) return "–";
+    if (h < 1) return Math.max(1, Math.round(h * 60)) + "m";
+    return Math.floor(h) + "h " + Math.round((h % 1) * 60) + "m";
+  }
+  function renderGoal(mins, tripKills) {
+    var T75 = CharmGoal.XP_TABLE;
+    $("gGoalLabel").textContent = goal.goalLevel;
+    if (!goal.xp) {
+      $("gLevel").textContent = "Level –";
+      $("gXpLine").textContent = "Enter your Summoning XP below.";
+      ["gKills", "gEta"].forEach(function (id) { $(id).textContent = "–"; });
+      document.querySelectorAll("[data-need]").forEach(function (b) { b.textContent = "–"; });
+      $("gFill").style.width = "0%"; $("gGhost").style.width = "0%";
+    } else {
+      var p = CharmGoal.plan({ xp: goal.xp, goalLevel: goal.goalLevel, boost: goal.boost,
+        charms: state.now || zeros(), rates: currentRates(), potions: goal.potions });
+      var startLvl = Math.min(p.level, goal.goalLevel - 1);
+      var lo = T75[startLvl] || 0, span = p.goalXp - lo;
+      var pct = Math.max(0, Math.min(100, (goal.xp - lo) / span * 100));
+      var gpct = Math.max(0, Math.min(100, (p.xpAfterInfuse - lo) / span * 100));
+      $("gFill").style.width = pct.toFixed(1) + "%";
+      $("gGhost").style.width = gpct.toFixed(1) + "%";
+      $("gLevel").textContent = "Level " + p.level;
+      $("gXpLine").textContent = p.xpLeft <= 0 ? "Goal reached."
+        : p.xpLeft.toLocaleString() + " XP to go · level " + p.levelAfterInfuse + " after infusing your backpack";
+      $("gKills").textContent = isFinite(p.kills) ? p.kills.toLocaleString() : "–";
+      document.querySelectorAll("[data-need]").forEach(function (b) {
+        var c = b.getAttribute("data-need");
+        b.textContent = p.toCollect ? p.toCollect[c].toLocaleString() : "–";
+      });
+      var kph = mins >= 5 && tripKills > 0 ? tripKills / (mins / 60) : 0;
+      $("gEta").textContent = kph > 0 && isFinite(p.kills) ? fmtHours(p.kills / kph) : "–";
+    }
+    var kphShow = mins >= 5 && tripKills > 0 ? Math.round(tripKills / (mins / 60)).toLocaleString() : "–";
+    $("gKph").textContent = kphShow;
+  }
+  function setupGoal() {
+    var gs = $("gGoal");
+    for (var l = 52; l <= 99; l++) {
+      var o = document.createElement("option"); o.value = l; o.textContent = l; gs.appendChild(o);
+    }
+    var ms = $("gMonster");
+    Object.keys(CharmGoal.MONSTERS).forEach(function (k) {
+      var o = document.createElement("option"); o.value = k; o.textContent = CharmGoal.MONSTERS[k].name; ms.appendChild(o);
+    });
+    function fill() {
+      $("gXp").value = goal.xp ? String(goal.xp) : "";
+      gs.value = String(goal.goalLevel);
+      ms.value = goal.monster;
+      $("gBoost").value = goal.boost ? String(goal.boost) : "";
+      $("gPots").checked = !!goal.potions;
+      $("gCustom").hidden = goal.monster !== "custom";
+      document.querySelectorAll("[data-rate]").forEach(function (i) { i.value = String(goal.custom[i.getAttribute("data-rate")]); });
+    }
+    fill();
+    $("goalForm").addEventListener("submit", function (e) { e.preventDefault(); });
+    $("goalForm").addEventListener("input", function (e) {
+      var t = e.target, num = function (v) { var n = Number(String(v).replace(/[, ]/g, "")); return isFinite(n) && n >= 0 ? n : 0; };
+      if (t.id === "gXp") goal.xp = Math.floor(num(t.value));
+      else if (t.id === "gGoal") goal.goalLevel = Number(t.value);
+      else if (t.id === "gMonster") { goal.monster = t.value; $("gCustom").hidden = goal.monster !== "custom"; }
+      else if (t.id === "gBoost") goal.boost = num(t.value);
+      else if (t.id === "gPots") goal.potions = t.checked;
+      else if (t.dataset && t.dataset.rate) goal.custom[t.dataset.rate] = num(t.value);
+      saveGoal(); render();
+    });
+    function show(tab) {
+      var goalOn = tab === "goal";
+      $("charmsView").hidden = goalOn; $("goalView").hidden = !goalOn;
+      $("tabCharms").setAttribute("aria-selected", String(!goalOn));
+      $("tabGoal").setAttribute("aria-selected", String(goalOn));
+      try { localStorage.setItem("charmCounter.tab", tab); } catch (e) {}
+    }
+    $("tabCharms").addEventListener("click", function () { show("charms"); });
+    $("tabGoal").addEventListener("click", function () { show("goal"); });
+    var saved = null; try { saved = localStorage.getItem("charmCounter.tab"); } catch (e) {}
+    if (saved === "goal") show("goal");
   }
   function flash(c) {
     var tile = document.querySelector('.tile[data-colour="' + c + '"]');
@@ -132,6 +236,7 @@
 
   // ---- Wiring ----------------------------------------------------------
   function setup() {
+    setupGoal();
     render();
     setInterval(render, 30000);
 

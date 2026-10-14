@@ -21,6 +21,16 @@ Once a second the app looks for each charm's icon on screen and reads the yellow
 
 A reading has to come out the same twice in a row before it counts, so a half-drawn frame can't add charms. If you close the backpack, the next reading after you reopen it becomes the new starting point.
 
+## Goal tab
+
+Enter your Summoning XP, pick a goal level (52 to 99) and what you're killing (exiled kalphites, dust devils, or your own drop rates), and the tab shows:
+
+- your level now and the level you'd reach by infusing the charms in your backpack (blues first, best pouch for your level);
+- kills left and how many of each charm you still need;
+- kills per hour this trip (estimated from charms gained) and time left at that pace.
+
+Charming potions double the expected charms per kill. Update your XP after you infuse.
+
 ## Calibration
 
 The charm icons and number font were taken from a 2560x1369 client screenshot at 100% interface scaling. If you change interface scaling or the backpack's look, the app may stop finding the icons and would need new samples.
